@@ -5,14 +5,115 @@ import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.text.InputFilter;
+import android.text.InputType;
 import android.view.Gravity;
 import android.webkit.*;
 import android.widget.*;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity {
     WebView web;
     SharedPreferences sp;
+
+    static final String[] GENDER_LABELS = {"Male", "Female", "Transgender"};
+    static final String[] GENDER_CODES = {"M", "F", "T"};
+    static final String[] BERTH_LABELS = {"No Preference", "Lower", "Middle", "Upper", "Side Lower", "Side Upper"};
+    static final String[] BERTH_CODES = {"", "LB", "MB", "UB", "SL", "SU"};
+
+    static final String FILL_JS = """
+(function(){
+  var P = __DATA__;
+  var tries = 0;
+  var done = 0;
+  function all(sel){ return document.querySelectorAll(sel); }
+  function setVal(el, v){
+    if(!el) return false;
+    var proto = (el.tagName === 'SELECT') ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    var d = Object.getOwnPropertyDescriptor(proto, 'value');
+    try { el.focus(); } catch(e) {}
+    d.set.call(el, v);
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+    el.dispatchEvent(new Event('blur', {bubbles:true}));
+    return true;
+  }
+  function setSel(el, code, label){
+    if(!el) return false;
+    for(var i = 0; i < el.options.length; i++){
+      var o = el.options[i];
+      var txt = (o.text || '').trim().toLowerCase();
+      if(o.value === code || txt.indexOf(label.toLowerCase()) === 0){
+        return setVal(el, o.value);
+      }
+    }
+    return false;
+  }
+  function nameEls(){
+    return all("[formcontrolname='passengerName'] input, input[formcontrolname='passengerName'], input[placeholder='Name']");
+  }
+  function hasChild(e){
+    for(var j = 0; j < e.children.length; j++){
+      if((e.children[j].textContent || '').toLowerCase().indexOf('add passenger') >= 0) return true;
+    }
+    return false;
+  }
+  function addBtn(){
+    var els = all('a,button,span,div');
+    for(var i = 0; i < els.length; i++){
+      var t = (els[i].textContent || '').trim().toLowerCase();
+      if(t.length < 25 && t.indexOf('add passenger') >= 0 && !hasChild(els[i])) return els[i];
+    }
+    return null;
+  }
+  function fillRow(i, p){
+    var ns = nameEls();
+    var ags = all("input[formcontrolname='passengerAge'], input[placeholder='Age']");
+    var gs = all("select[formcontrolname='passengerGender']");
+    var bs = all("select[formcontrolname='passengerBerthChoice']");
+    var ok = 0;
+    if(setVal(ns[i], p.name)) ok++;
+    if(setVal(ags[i], p.age)) ok++;
+    setSel(gs[i], p.g, p.gl);
+    setSel(bs[i], p.b, p.bl);
+    return ok;
+  }
+  function finish(){
+    var msg;
+    if(nameEls().length === 0){
+      msg = 'Passenger form nahi mila. Pehle train select karke Passenger Details page par aao.';
+    } else {
+      msg = done + ' / ' + P.length + ' passenger fill hue';
+    }
+    try { Android.report(msg); } catch(e) {}
+  }
+  function step(i){
+    if(i >= P.length){ finish(); return; }
+    if(nameEls().length <= i){
+      var b = addBtn();
+      if(b && tries < 20){
+        tries++;
+        b.click();
+        setTimeout(function(){ step(i); }, 600);
+        return;
+      }
+      finish();
+      return;
+    }
+    if(fillRow(i, P[i]) > 0) done++;
+    step(i + 1);
+  }
+  step(0);
+})();
+""";
+
+    class Bridge {
+        @JavascriptInterface
+        public void report(final String m) {
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, m, Toast.LENGTH_LONG).show());
+        }
+    }
 
     @Override
     protected void onCreate(Bundle b) {
@@ -30,6 +131,7 @@ public class MainActivity extends Activity {
         s.setUseWideViewPort(true);
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+        web.addJavascriptInterface(new Bridge(), "Android");
         web.setWebViewClient(new WebViewClient());
         web.loadUrl("https://www.irctc.co.in/nget/train-search");
         root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1f));
@@ -55,50 +157,197 @@ public class MainActivity extends Activity {
         return x;
     }
 
+    int indexOf(String[] a, String v) {
+        for (int i = 0; i < a.length; i++) {
+            if (a[i].equals(v)) return i;
+        }
+        return -1;
+    }
+
+    JSONArray load() {
+        try {
+            return new JSONArray(sp.getString("list", "[]"));
+        } catch (Exception e) {
+            return new JSONArray();
+        }
+    }
+
+    void save(JSONArray a) {
+        sp.edit().putString("list", a.toString()).apply();
+    }
+
     void passengerDialog() {
+        final JSONArray arr = load();
+        final AlertDialog[] dlg = new AlertDialog[1];
+
+        ScrollView sv = new ScrollView(this);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(30, 20, 30, 0);
+        sv.addView(box);
+
+        if (arr.length() == 0) {
+            TextView t = new TextView(this);
+            t.setText("Koi passenger save nahi hai. '+ Add New' dabao.");
+            box.addView(t);
+        }
+
+        for (int i = 0; i < arr.length(); i++) {
+            final int idx = i;
+            final JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+
+            LinearLayout row = new LinearLayout(this);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+
+            CheckBox cb = new CheckBox(this);
+            int gi = Math.max(0, indexOf(GENDER_CODES, o.optString("g")));
+            cb.setText(o.optString("name") + " (" + o.optString("age") + ", " + GENDER_LABELS[gi] + ")");
+            cb.setChecked(o.optBoolean("sel", true));
+            cb.setOnCheckedChangeListener((v, c) -> {
+                try {
+                    o.put("sel", c);
+                } catch (Exception e) {
+                }
+                save(arr);
+            });
+
+            Button ed = new Button(this);
+            ed.setText("Edit");
+            ed.setTextSize(12);
+            ed.setOnClickListener(v -> {
+                dlg[0].dismiss();
+                editDialog(idx);
+            });
+
+            Button del = new Button(this);
+            del.setText("X");
+            del.setTextSize(12);
+            del.setOnClickListener(v -> {
+                arr.remove(idx);
+                save(arr);
+                dlg[0].dismiss();
+                passengerDialog();
+            });
+
+            row.addView(cb, new LinearLayout.LayoutParams(0, -2, 1f));
+            row.addView(ed, new LinearLayout.LayoutParams(-2, -2));
+            row.addView(del, new LinearLayout.LayoutParams(-2, -2));
+            box.addView(row);
+        }
+
+        dlg[0] = new AlertDialog.Builder(this)
+            .setTitle("Saved Passengers (" + arr.length() + "/6)")
+            .setView(sv)
+            .setPositiveButton("+ Add New", (d, w) -> editDialog(-1))
+            .setNegativeButton("Close", null)
+            .show();
+    }
+
+    void editDialog(final int idx) {
+        final JSONArray arr = load();
+        if (idx < 0 && arr.length() >= 6) {
+            Toast.makeText(this, "Maximum 6 passenger save ho sakte hain", Toast.LENGTH_SHORT).show();
+            passengerDialog();
+            return;
+        }
+        final JSONObject cur = idx >= 0 ? arr.optJSONObject(idx) : null;
+
+        ScrollView sv = new ScrollView(this);
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
         l.setPadding(40, 20, 40, 0);
-        EditText n = new EditText(this);
-        n.setHint("Passenger Name");
-        n.setText(sp.getString("name", ""));
-        EditText a = new EditText(this);
+        sv.addView(l);
+
+        final EditText n = new EditText(this);
+        n.setHint("Passenger Name (max 16)");
+        n.setFilters(new InputFilter[]{new InputFilter.LengthFilter(16)});
+        final EditText a = new EditText(this);
         a.setHint("Age");
-        a.setInputType(2);
-        a.setText(sp.getString("age", ""));
-        Spinner g = new Spinner(this);
-        g.setAdapter(new ArrayAdapter<>(this,
-            android.R.layout.simple_spinner_dropdown_item, new String[]{"Male", "Female"}));
+        a.setInputType(InputType.TYPE_CLASS_NUMBER);
+
+        final Spinner g = new Spinner(this);
+        g.setAdapter(new ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item, GENDER_LABELS));
+        final Spinner br = new Spinner(this);
+        br.setAdapter(new ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item, BERTH_LABELS));
+
+        if (cur != null) {
+            n.setText(cur.optString("name"));
+            a.setText(cur.optString("age"));
+            int gi = indexOf(GENDER_CODES, cur.optString("g"));
+            int bi = indexOf(BERTH_CODES, cur.optString("b"));
+            g.setSelection(gi < 0 ? 0 : gi);
+            br.setSelection(bi < 0 ? 0 : bi);
+        }
+
+        TextView gl = new TextView(this);
+        gl.setText("Gender");
+        TextView bl = new TextView(this);
+        bl.setText("Berth Preference");
+
         l.addView(n);
         l.addView(a);
+        l.addView(gl);
         l.addView(g);
+        l.addView(bl);
+        l.addView(br);
 
-        new AlertDialog.Builder(this).setTitle("Passenger Details").setView(l)
+        new AlertDialog.Builder(this)
+            .setTitle(idx >= 0 ? "Edit Passenger" : "New Passenger")
+            .setView(sv)
             .setPositiveButton("Save", (d, w) -> {
-                sp.edit().putString("name", n.getText().toString())
-                  .putString("age", a.getText().toString())
-                  .putString("gender", g.getSelectedItemPosition() == 0 ? "M" : "F")
-                  .apply();
-                Toast.makeText(this, "Saved!", Toast.LENGTH_SHORT).show();
-            }).setNegativeButton("Cancel", null).show();
+                String name = n.getText().toString().trim();
+                String age = a.getText().toString().trim();
+                if (name.isEmpty() || age.isEmpty()) {
+                    Toast.makeText(this, "Name aur Age zaroori hai", Toast.LENGTH_SHORT).show();
+                    passengerDialog();
+                    return;
+                }
+                try {
+                    JSONObject o = new JSONObject();
+                    o.put("name", name);
+                    o.put("age", age);
+                    o.put("g", GENDER_CODES[g.getSelectedItemPosition()]);
+                    o.put("b", BERTH_CODES[br.getSelectedItemPosition()]);
+                    o.put("sel", cur == null ? true : cur.optBoolean("sel", true));
+                    if (idx >= 0) arr.put(idx, o); else arr.put(o);
+                    save(arr);
+                } catch (Exception e) {
+                }
+                passengerDialog();
+            })
+            .setNegativeButton("Cancel", (d, w) -> passengerDialog())
+            .show();
     }
 
     void fill() {
-        String name = sp.getString("name", "");
-        if (name.isEmpty()) {
-            Toast.makeText(this, "Pehle Passenger button se details save karein", Toast.LENGTH_LONG).show();
+        JSONArray arr = load();
+        JSONArray sel = new JSONArray();
+        try {
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                if (!o.optBoolean("sel", true)) continue;
+                int gi = Math.max(0, indexOf(GENDER_CODES, o.optString("g")));
+                int bi = Math.max(0, indexOf(BERTH_CODES, o.optString("b")));
+                JSONObject p = new JSONObject();
+                p.put("name", o.optString("name"));
+                p.put("age", o.optString("age"));
+                p.put("g", GENDER_CODES[gi]);
+                p.put("gl", GENDER_LABELS[gi]);
+                p.put("b", BERTH_CODES[bi]);
+                p.put("bl", BERTH_LABELS[bi]);
+                sel.put(p);
+            }
+        } catch (Exception e) {
+        }
+        if (sel.length() == 0) {
+            Toast.makeText(this, "Pehle Passenger button se passenger save aur select karein", Toast.LENGTH_LONG).show();
             return;
         }
-        String js = "(function(){"
-          + "var n=" + JSONObject.quote(name) + ",a=" + JSONObject.quote(sp.getString("age", "")) + ",g=" + JSONObject.quote(sp.getString("gender", "M")) + ";"
-          + "function setIn(el,v){if(!el)return;"
-          + "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el,v);"
-          + "el.dispatchEvent(new Event('input',{bubbles:true}));}"
-          + "setIn(document.querySelector(\"input[placeholder='Name']\"),n);"
-          + "setIn(document.querySelector(\"input[placeholder='Age']\"),a);"
-          + "var sel=document.querySelector(\"select[formcontrolname='passengerGender']\");"
-          + "if(sel){sel.value=g;sel.dispatchEvent(new Event('change',{bubbles:true}));}"
-          + "})();";
+        String js = FILL_JS.replace("__DATA__", sel.toString());
         web.evaluateJavascript(js, null);
     }
 
