@@ -26,6 +26,10 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
+        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
+        s.setUseWideViewPort(true);
+        CookieManager.getInstance().setAcceptCookie(true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
         web.setWebViewClient(new WebViewClient());
         web.loadUrl("https://www.irctc.co.in/nget/train-search");
         root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1f));
@@ -44,8 +48,10 @@ public class MainActivity extends Activity {
 
     Button makeBtn(String t, int c) {
         Button x = new Button(this);
-        x.setText(t); x.setTextColor(Color.WHITE);
-        x.setBackgroundColor(c); x.setGravity(Gravity.CENTER);
+        x.setText(t);
+        x.setTextColor(Color.WHITE);
+        x.setBackgroundColor(c);
+        x.setGravity(Gravity.CENTER);
         return x;
     }
 
@@ -53,14 +59,19 @@ public class MainActivity extends Activity {
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
         l.setPadding(40, 20, 40, 0);
-        EditText n = new EditText(this); n.setHint("Passenger Name");
+        EditText n = new EditText(this);
+        n.setHint("Passenger Name");
         n.setText(sp.getString("name", ""));
-        EditText a = new EditText(this); a.setHint("Age");
-        a.setInputType(2); a.setText(sp.getString("age", ""));
+        EditText a = new EditText(this);
+        a.setHint("Age");
+        a.setInputType(2);
+        a.setText(sp.getString("age", ""));
         Spinner g = new Spinner(this);
         g.setAdapter(new ArrayAdapter<>(this,
             android.R.layout.simple_spinner_dropdown_item, new String[]{"Male", "Female"}));
-        l.addView(n); l.addView(a); l.addView(g);
+        l.addView(n);
+        l.addView(a);
+        l.addView(g);
 
         new AlertDialog.Builder(this).setTitle("Passenger Details").setView(l)
             .setPositiveButton("Save", (d, w) -> {
