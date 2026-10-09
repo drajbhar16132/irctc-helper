@@ -4,19 +4,30 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.view.Gravity;
 import android.webkit.*;
 import android.widget.*;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity {
     WebView web;
     SharedPreferences sp;
+    TextView clock;
+    Handler handler = new Handler(Looper.getMainLooper());
+    SimpleDateFormat fmt = new SimpleDateFormat("EEE, dd MMM yyyy  HH:mm:ss", Locale.getDefault());
+    Runnable tick;
 
+    static final String HOME_URL = "https://www.irctc.co.in/nget/train-search";
     static final String[] GENDER_LABELS = {"Male", "Female", "Transgender"};
     static final String[] GENDER_CODES = {"M", "F", "T"};
     static final String[] BERTH_LABELS = {"No Preference", "Lower", "Middle", "Upper", "Side Lower", "Side Upper"};
@@ -162,29 +173,90 @@ public class MainActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
 
+        clock = new TextView(this);
+        clock.setTextSize(20);
+        clock.setTypeface(Typeface.DEFAULT_BOLD);
+        clock.setTextColor(Color.WHITE);
+        clock.setBackgroundColor(Color.parseColor("#213F99"));
+        clock.setGravity(Gravity.CENTER);
+        clock.setPadding(10, 16, 10, 16);
+        root.addView(clock, new LinearLayout.LayoutParams(-1, -2));
+
+        tick = new Runnable() {
+            @Override
+            public void run() {
+                clock.setText(fmt.format(new Date()));
+                handler.postDelayed(this, 500);
+            }
+        };
+
         web = new WebView(this);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
-        s.setUserAgentString("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36");
         s.setUseWideViewPort(true);
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
         web.addJavascriptInterface(new Bridge(), "Android");
-        web.setWebViewClient(new WebViewClient());
-        web.loadUrl("https://www.irctc.co.in/nget/train-search");
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest r) {
+                String u = r.getUrl().toString();
+                if (u.startsWith("http://")) {
+                    v.loadUrl("https://" + u.substring(7));
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
+            public void onReceivedHttpError(WebView v, WebResourceRequest r, WebResourceResponse e) {
+                if (r.isForMainFrame() && e.getStatusCode() == 403) {
+                    Toast.makeText(MainActivity.this,
+                        "IRCTC ne access block kiya (403). 'Reset' dabake dobara try karo.",
+                        Toast.LENGTH_LONG).show();
+                }
+            }
+        });
+        web.loadUrl(HOME_URL);
         root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         LinearLayout bar = new LinearLayout(this);
         Button p = makeBtn("Passenger", Color.parseColor("#FF6F00"));
         Button f = makeBtn("Fill", Color.parseColor("#2E7D32"));
+        Button r = makeBtn("Reset", Color.parseColor("#1565C0"));
         p.setOnClickListener(v -> passengerDialog());
         f.setOnClickListener(v -> fill());
+        r.setOnClickListener(v -> resetWeb());
         bar.addView(p, new LinearLayout.LayoutParams(0, 150, 1f));
         bar.addView(f, new LinearLayout.LayoutParams(0, 150, 1f));
+        bar.addView(r, new LinearLayout.LayoutParams(0, 150, 1f));
         root.addView(bar, new LinearLayout.LayoutParams(-1, -2));
 
         setContentView(root);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        handler.post(tick);
+    }
+
+    @Override
+    protected void onPause() {
+        handler.removeCallbacks(tick);
+        super.onPause();
+    }
+
+    void resetWeb() {
+        CookieManager cm = CookieManager.getInstance();
+        cm.removeAllCookies(null);
+        cm.flush();
+        WebStorage.getInstance().deleteAllData();
+        web.clearCache(true);
+        web.clearHistory();
+        web.loadUrl(HOME_URL);
+        Toast.makeText(this, "Reset ho gaya. IRCTC me dobara login karo.", Toast.LENGTH_LONG).show();
     }
 
     Button makeBtn(String t, int c) {
@@ -232,7 +304,7 @@ public class MainActivity extends Activity {
 
     void passengerDialog() {
         final JSONArray arr = load();
-        final AlertDialog[] dlg = new AlertDialog.Builder(this).create() == null ? null : new AlertDialog[1];
+        final AlertDialog[] dlg = new AlertDialog[1];
 
         ScrollView sv = new ScrollView(this);
         LinearLayout box = new LinearLayout(this);
@@ -487,4 +559,3 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (web.canGoBack()) web.goBack(); else super.onBackPressed();
     }
-}
