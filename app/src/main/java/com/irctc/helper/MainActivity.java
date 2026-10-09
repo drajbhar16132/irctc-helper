@@ -21,10 +21,16 @@ public class MainActivity extends Activity {
     static final String[] GENDER_CODES = {"M", "F", "T"};
     static final String[] BERTH_LABELS = {"No Preference", "Lower", "Middle", "Upper", "Side Lower", "Side Upper"};
     static final String[] BERTH_CODES = {"", "LB", "MB", "UB", "SL", "SU"};
+    static final String[] FOOD_LABELS = {"Default (change mat karo)", "Veg", "Non Veg", "Jain Meal", "Veg (Diabetic)", "Non Veg (Diabetic)", "No Food"};
+    static final String[] FOOD_CODES = {"", "V", "N", "J", "F", "G", "D"};
+    static final String[] OPT_LABELS = {"Change mat karo", "Haan (ON)", "Nahi (OFF)"};
+    static final int MAX_SAVED = 30;
+    static final int MAX_FILL = 6;
 
     static final String FILL_JS = """
 (function(){
   var P = __DATA__;
+  var O = __OPTS__;
   var tries = 0;
   var done = 0;
   function all(sel){ return document.querySelectorAll(sel); }
@@ -41,14 +47,35 @@ public class MainActivity extends Activity {
   }
   function setSel(el, code, label){
     if(!el) return false;
-    for(var i = 0; i < el.options.length; i++){
-      var o = el.options[i];
-      var txt = (o.text || '').trim().toLowerCase();
-      if(o.value === code || txt.indexOf(label.toLowerCase()) === 0){
-        return setVal(el, o.value);
-      }
+    var i, o;
+    for(i = 0; i < el.options.length; i++){
+      o = el.options[i];
+      if(o.value === code) return setVal(el, o.value);
+    }
+    var lb = label.toLowerCase();
+    for(i = 0; i < el.options.length; i++){
+      o = el.options[i];
+      if((o.text || '').trim().toLowerCase().indexOf(lb) === 0) return setVal(el, o.value);
     }
     return false;
+  }
+  function clickEl(el){
+    if(!el) return;
+    var host = el.closest ? el.closest('p-checkbox,p-radiobutton') : null;
+    var box = host ? host.querySelector('.p-checkbox-box,.p-radiobutton-box') : null;
+    (box || el).click();
+  }
+  function setCheck(sel, want){
+    var el = document.querySelector(sel);
+    if(!el) return false;
+    if(!!el.checked !== want) clickEl(el);
+    return true;
+  }
+  function setInsurance(yes){
+    var rs = all("p-radiobutton[formcontrolname='travelInsuranceOpted'] input[type='radio'], input[type='radio'][formcontrolname='travelInsuranceOpted']");
+    if(rs.length < 2) return false;
+    clickEl(yes ? rs[0] : rs[1]);
+    return true;
   }
   function nameEls(){
     return all("[formcontrolname='passengerName'] input, input[formcontrolname='passengerName'], input[placeholder='Name']");
@@ -72,12 +99,22 @@ public class MainActivity extends Activity {
     var ags = all("input[formcontrolname='passengerAge'], input[placeholder='Age']");
     var gs = all("select[formcontrolname='passengerGender']");
     var bs = all("select[formcontrolname='passengerBerthChoice']");
+    var fs = all("select[formcontrolname='passengerFoodChoice']");
     var ok = 0;
     if(setVal(ns[i], p.name)) ok++;
     if(setVal(ags[i], p.age)) ok++;
     setSel(gs[i], p.g, p.gl);
     setSel(bs[i], p.b, p.bl);
+    if(p.f) setSel(fs[i], p.f, p.fl);
     return ok;
+  }
+  function fillOptions(){
+    var n = [];
+    if(O.mobile && setVal(document.querySelector("input[formcontrolname='mobileNumber'], input[placeholder*='obile']"), O.mobile)) n.push('Mobile');
+    if(O.auto > 0 && setCheck("p-checkbox[formcontrolname='autoUpgradationSelected'] input, input[formcontrolname='autoUpgradationSelected'], #autoUpgradation", O.auto === 1)) n.push('Auto upgrade');
+    if(O.conf > 0 && setCheck("p-checkbox[formcontrolname='bookOnlyIfCnf'] input, input[formcontrolname='bookOnlyIfCnf'], #confirmberths", O.conf === 1)) n.push('Confirm berth');
+    if(O.ins > 0 && setInsurance(O.ins === 1)) n.push('Insurance');
+    return n;
   }
   function finish(){
     var msg;
@@ -85,6 +122,8 @@ public class MainActivity extends Activity {
       msg = 'Passenger form nahi mila. Pehle train select karke Passenger Details page par aao.';
     } else {
       msg = done + ' / ' + P.length + ' passenger fill hue';
+      var notes = fillOptions();
+      if(notes.length) msg += ' | ' + notes.join(', ');
     }
     try { Android.report(msg); } catch(e) {}
   }
@@ -157,6 +196,21 @@ public class MainActivity extends Activity {
         return x;
     }
 
+    TextView label(String t) {
+        TextView x = new TextView(this);
+        x.setText(t);
+        x.setPadding(0, 20, 0, 0);
+        return x;
+    }
+
+    Spinner optSpinner(String key) {
+        Spinner s = new Spinner(this);
+        s.setAdapter(new ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item, OPT_LABELS));
+        s.setSelection(sp.getInt(key, 0));
+        return s;
+    }
+
     int indexOf(String[] a, String v) {
         for (int i = 0; i < a.length; i++) {
             if (a[i].equals(v)) return i;
@@ -178,7 +232,7 @@ public class MainActivity extends Activity {
 
     void passengerDialog() {
         final JSONArray arr = load();
-        final AlertDialog[] dlg = new AlertDialog[1];
+        final AlertDialog[] dlg = new AlertDialog.Builder(this).create() == null ? null : new AlertDialog[1];
 
         ScrollView sv = new ScrollView(this);
         LinearLayout box = new LinearLayout(this);
@@ -190,6 +244,22 @@ public class MainActivity extends Activity {
             TextView t = new TextView(this);
             t.setText("Koi passenger save nahi hai. '+ Add New' dabao.");
             box.addView(t);
+        } else {
+            Button un = new Button(this);
+            un.setText("Sab untick karo");
+            un.setTextSize(12);
+            un.setOnClickListener(v -> {
+                try {
+                    for (int k = 0; k < arr.length(); k++) {
+                        arr.getJSONObject(k).put("sel", false);
+                    }
+                } catch (Exception e) {
+                }
+                save(arr);
+                dlg[0].dismiss();
+                passengerDialog();
+            });
+            box.addView(un);
         }
 
         for (int i = 0; i < arr.length(); i++) {
@@ -238,17 +308,18 @@ public class MainActivity extends Activity {
         }
 
         dlg[0] = new AlertDialog.Builder(this)
-            .setTitle("Saved Passengers (" + arr.length() + "/6)")
+            .setTitle("Saved Passengers (" + arr.length() + ")")
             .setView(sv)
             .setPositiveButton("+ Add New", (d, w) -> editDialog(-1))
+            .setNeutralButton("Settings", (d, w) -> settingsDialog())
             .setNegativeButton("Close", null)
             .show();
     }
 
     void editDialog(final int idx) {
         final JSONArray arr = load();
-        if (idx < 0 && arr.length() >= 6) {
-            Toast.makeText(this, "Maximum 6 passenger save ho sakte hain", Toast.LENGTH_SHORT).show();
+        if (idx < 0 && arr.length() >= MAX_SAVED) {
+            Toast.makeText(this, "Maximum " + MAX_SAVED + " passenger save ho sakte hain", Toast.LENGTH_SHORT).show();
             passengerDialog();
             return;
         }
@@ -273,27 +344,29 @@ public class MainActivity extends Activity {
         final Spinner br = new Spinner(this);
         br.setAdapter(new ArrayAdapter<String>(this,
             android.R.layout.simple_spinner_dropdown_item, BERTH_LABELS));
+        final Spinner fd = new Spinner(this);
+        fd.setAdapter(new ArrayAdapter<String>(this,
+            android.R.layout.simple_spinner_dropdown_item, FOOD_LABELS));
 
         if (cur != null) {
             n.setText(cur.optString("name"));
             a.setText(cur.optString("age"));
             int gi = indexOf(GENDER_CODES, cur.optString("g"));
             int bi = indexOf(BERTH_CODES, cur.optString("b"));
+            int fi = indexOf(FOOD_CODES, cur.optString("f"));
             g.setSelection(gi < 0 ? 0 : gi);
             br.setSelection(bi < 0 ? 0 : bi);
+            fd.setSelection(fi < 0 ? 0 : fi);
         }
-
-        TextView gl = new TextView(this);
-        gl.setText("Gender");
-        TextView bl = new TextView(this);
-        bl.setText("Berth Preference");
 
         l.addView(n);
         l.addView(a);
-        l.addView(gl);
+        l.addView(label("Gender"));
         l.addView(g);
-        l.addView(bl);
+        l.addView(label("Berth Preference"));
         l.addView(br);
+        l.addView(label("Food Choice (jahan available ho)"));
+        l.addView(fd);
 
         new AlertDialog.Builder(this)
             .setTitle(idx >= 0 ? "Edit Passenger" : "New Passenger")
@@ -312,11 +385,55 @@ public class MainActivity extends Activity {
                     o.put("age", age);
                     o.put("g", GENDER_CODES[g.getSelectedItemPosition()]);
                     o.put("b", BERTH_CODES[br.getSelectedItemPosition()]);
+                    o.put("f", FOOD_CODES[fd.getSelectedItemPosition()]);
                     o.put("sel", cur == null ? true : cur.optBoolean("sel", true));
                     if (idx >= 0) arr.put(idx, o); else arr.put(o);
                     save(arr);
                 } catch (Exception e) {
                 }
+                passengerDialog();
+            })
+            .setNegativeButton("Cancel", (d, w) -> passengerDialog())
+            .show();
+    }
+
+    void settingsDialog() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout l = new LinearLayout(this);
+        l.setOrientation(LinearLayout.VERTICAL);
+        l.setPadding(40, 20, 40, 0);
+        sv.addView(l);
+
+        final EditText mob = new EditText(this);
+        mob.setHint("Mobile Number (10 digit)");
+        mob.setInputType(InputType.TYPE_CLASS_PHONE);
+        mob.setFilters(new InputFilter[]{new InputFilter.LengthFilter(10)});
+        mob.setText(sp.getString("mobile", ""));
+
+        final Spinner ins = optSpinner("ins");
+        final Spinner auto = optSpinner("auto");
+        final Spinner conf = optSpinner("conf");
+
+        l.addView(label("Mobile Number"));
+        l.addView(mob);
+        l.addView(label("Travel Insurance"));
+        l.addView(ins);
+        l.addView(label("Auto Upgrade (Consider for auto upgradation)"));
+        l.addView(auto);
+        l.addView(label("Book only if confirm berths allotted"));
+        l.addView(conf);
+
+        new AlertDialog.Builder(this)
+            .setTitle("Booking Settings")
+            .setView(sv)
+            .setPositiveButton("Save", (d, w) -> {
+                sp.edit()
+                    .putString("mobile", mob.getText().toString().trim())
+                    .putInt("ins", ins.getSelectedItemPosition())
+                    .putInt("auto", auto.getSelectedItemPosition())
+                    .putInt("conf", conf.getSelectedItemPosition())
+                    .apply();
+                Toast.makeText(this, "Settings save ho gayi", Toast.LENGTH_SHORT).show();
                 passengerDialog();
             })
             .setNegativeButton("Cancel", (d, w) -> passengerDialog())
@@ -330,8 +447,13 @@ public class MainActivity extends Activity {
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
                 if (!o.optBoolean("sel", true)) continue;
+                if (sel.length() >= MAX_FILL) {
+                    Toast.makeText(this, "6 se zyada tick hain, sirf pehle 6 fill honge", Toast.LENGTH_LONG).show();
+                    break;
+                }
                 int gi = Math.max(0, indexOf(GENDER_CODES, o.optString("g")));
                 int bi = Math.max(0, indexOf(BERTH_CODES, o.optString("b")));
+                int fi = Math.max(0, indexOf(FOOD_CODES, o.optString("f")));
                 JSONObject p = new JSONObject();
                 p.put("name", o.optString("name"));
                 p.put("age", o.optString("age"));
@@ -339,15 +461,25 @@ public class MainActivity extends Activity {
                 p.put("gl", GENDER_LABELS[gi]);
                 p.put("b", BERTH_CODES[bi]);
                 p.put("bl", BERTH_LABELS[bi]);
+                p.put("f", FOOD_CODES[fi]);
+                p.put("fl", FOOD_LABELS[fi]);
                 sel.put(p);
             }
         } catch (Exception e) {
         }
         if (sel.length() == 0) {
-            Toast.makeText(this, "Pehle Passenger button se passenger save aur select karein", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Pehle Passenger button se passenger save aur tick karein", Toast.LENGTH_LONG).show();
             return;
         }
-        String js = FILL_JS.replace("__DATA__", sel.toString());
+        JSONObject opts = new JSONObject();
+        try {
+            opts.put("mobile", sp.getString("mobile", ""));
+            opts.put("ins", sp.getInt("ins", 0));
+            opts.put("auto", sp.getInt("auto", 0));
+            opts.put("conf", sp.getInt("conf", 0));
+        } catch (Exception e) {
+        }
+        String js = FILL_JS.replace("__DATA__", sel.toString()).replace("__OPTS__", opts.toString());
         web.evaluateJavascript(js, null);
     }
 
